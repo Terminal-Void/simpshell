@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.20)
 project(simpshell C)
 
 set(CMAKE_C_STANDARD 17)
