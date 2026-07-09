@@ -15,10 +15,13 @@
 #include "executor.h"
 #include "prompt.h"
 #include "terminal.h"
+#include "utils.h"
 
 
 int main(const int argc, const char *argv[]) {
 
+    (void)argc;
+    (void)argv;
 
     init_shell();
 
@@ -50,9 +53,17 @@ int main(const int argc, const char *argv[]) {
         // 如果用户什么都没输直接按了回车，跳过本次循环
         if (strlen(input) == 0) { continue; }
 
+        DynamicTokenList *cmd_tokens=NULL;
 
-        const int cmd_argc = parse_command(input, cmd_argv , &is_background);
+        if (tokenize(input, &cmd_tokens)<0) {
+            continue;
+        }
+
+        const int cmd_argc = parse_tokens_as_command(cmd_tokens, cmd_argv,
+                                                     ARRAY_SIZE(cmd_argv),
+                                                     &is_background);
         if (cmd_argc <= 0) {
+            free_DynamicTokenList(cmd_tokens);
             continue;
         }
 
@@ -69,9 +80,8 @@ int main(const int argc, const char *argv[]) {
 
         // 释放内存
         free_expanded_args(to_free,free_count);
+        free_DynamicTokenList(cmd_tokens);
         free_count=0;
     }
     return 0;
 }
-
-

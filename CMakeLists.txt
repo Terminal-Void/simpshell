@@ -14,6 +14,7 @@ add_executable(simpshell
         src/jobs.c
         src/prompt.c
         src/terminal.c
+        src/utils.c
 )
 
 target_include_directories(simpshell PRIVATE
