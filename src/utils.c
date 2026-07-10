@@ -50,7 +50,7 @@ int append_char(DynamicString* target,const char c) {
         const size_t new_capacity = (target->capacity) * 2;
         char *new_dstr = realloc(target->dstr, new_capacity);
         //不能直接写target->dstr = realloc(target->dstr, new_capacity);
-        //否则若realloc返回-1，覆盖target指针，会泄漏内存
+        //否则若realloc返回NULL，覆盖target指针，会泄漏内存
         if (new_dstr == NULL) {
             perror("realloc");
             return -1;
@@ -63,6 +63,19 @@ int append_char(DynamicString* target,const char c) {
     target->dstr[target->cursor] = c;
     (target->cursor)++;
     target->dstr[target->cursor] = '\0';
+    return 0;
+}
+
+int append_cstring(DynamicString* target, const char* cstring) {
+    assert(target != NULL);
+    assert(target->dstr != NULL);
+    assert(target->cursor <= target->capacity);
+    for (size_t i=0;cstring[i]!='\0';i++) {
+        int status = 0;
+        if ((status = append_char(target, cstring[i]))!=0) {
+            return status;
+        }
+    }
     return 0;
 }
 
@@ -124,7 +137,6 @@ void free_DynamicTokenList(DynamicTokenList* dtl) {
     }
     free(dtl->tokens);
     free(dtl);
-    dtl = NULL;
 }
 
 int append_tokens(DynamicTokenList* target, Token *token) {
@@ -150,4 +162,49 @@ int append_tokens(DynamicTokenList* target, Token *token) {
     (target->cursor)++;
     target->tokens[target->cursor] = NULL;
     return 0;
+}
+
+char* spawn_cmdstring_from_DynamicTokenList(const DynamicTokenList* source) {
+    assert(source != NULL);
+    DynamicString* dyn_cmdstring = new_DynamicString(32);
+    if(dyn_cmdstring == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+    for (size_t i=0;i<source->cursor;i++) {
+        assert(source->tokens[i] != NULL);
+        if (i > 0 && append_char(dyn_cmdstring, ' ') < 0) {
+            free_DynamicString(dyn_cmdstring);
+            return NULL;
+        }
+        const Token *this_token = source->tokens[i];
+        int status = 0;
+        if (this_token->type == TOK_WORD) {
+            status=append_cstring(dyn_cmdstring,this_token->text);
+        }
+        else {
+            if (this_token->type == TOK_PIPE) {
+                status=append_char(dyn_cmdstring,'|');
+            }
+            else if (this_token->type == TOK_REDIR_IN) {
+                status=append_char(dyn_cmdstring,'<');
+            }
+            else if (this_token->type == TOK_REDIR_OUT) {
+                status=append_char(dyn_cmdstring,'>');
+            }
+            else if (this_token->type == TOK_REDIR_APP) {
+                status=append_cstring(dyn_cmdstring,">>");
+            }
+            else if (this_token->type == TOK_AMP) {
+                status=append_char(dyn_cmdstring,'&');
+            }
+        }
+        if (status!=0) {
+            free_DynamicString(dyn_cmdstring);
+            return NULL;
+        }
+    }
+    char* cmd_string = spawn_cstring_from_DynamicString(dyn_cmdstring);
+    free_DynamicString(dyn_cmdstring);
+    return cmd_string;
 }

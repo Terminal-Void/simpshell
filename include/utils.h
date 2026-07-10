@@ -18,5 +18,7 @@ char* spawn_cstring_from_DynamicString(const DynamicString* target);
 DynamicTokenList* new_DynamicTokenList(size_t n);
 void free_DynamicTokenList(DynamicTokenList* dtl);
 int append_tokens(DynamicTokenList* target, Token *token);
+int append_cstring(DynamicString* target, const char* cstring);
+char* spawn_cmdstring_from_DynamicTokenList(const DynamicTokenList* source);
 
 #endif //SIMPSHELL_UTILS_H

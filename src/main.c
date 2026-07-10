@@ -33,8 +33,6 @@ int main(const int argc, const char *argv[]) {
         check_background_jobs();
 
         //0. 准备有关变量
-        int free_count = 0;
-        char *to_free[MAX_ARGS];
         int is_background = 0;
 
         // 1. 打印Prompt
@@ -64,10 +62,9 @@ int main(const int argc, const char *argv[]) {
                                                      &is_background);
         if (cmd_argc <= 0) {
             free_DynamicTokenList(cmd_tokens);
+            cmd_tokens=NULL;
             continue;
         }
-
-        expand_tilde(cmd_argv, to_free, &free_count);
 
         const BuiltinFunc builtin_func = get_builtin_func(cmd_argv[0]);
 
@@ -75,13 +72,12 @@ int main(const int argc, const char *argv[]) {
             builtin_func(cmd_argv);
         }
         else {
-            execute_external(cmd_argv,is_background);
+            execute_external(cmd_argv,is_background,input);
         }
 
         // 释放内存
-        free_expanded_args(to_free,free_count);
         free_DynamicTokenList(cmd_tokens);
-        free_count=0;
+        cmd_tokens=NULL;
     }
     return 0;
 }

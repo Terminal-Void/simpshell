@@ -7,13 +7,12 @@
 #include <stddef.h>
 
 typedef enum {
-    TOK_WORD,       // 普通单词，比如 echo、hello world
-    TOK_PIPE,       // |
-    TOK_REDIR_IN,   // <
-    TOK_REDIR_OUT,  // >
-    TOK_REDIR_APP,  // >>
-    TOK_AMP,        // &
-    TOK_END
+    TOK_WORD=0,       // 普通单词，比如 echo、hello world
+    TOK_PIPE=1,       // |
+    TOK_REDIR_IN=2,   // <
+    TOK_REDIR_OUT=3,  // >
+    TOK_REDIR_APP=4,  // >>
+    TOK_AMP=5         // &
 } TokenType;
 
 typedef struct {
@@ -51,8 +50,5 @@ typedef struct {
 int tokenize(const char *input, DynamicTokenList **out_tokens);
 int parse_tokens_as_command(const DynamicTokenList *tokens, char **cmd_argv,
                             size_t max_args, int *is_background);
-int parse_command(char *input, char **cmd_argv, int *is_background);
-void expand_tilde(char **argv, char **to_free, int *free_count);
-void free_expanded_args(char **to_free, int free_count);
-void free_emitted_tokens(Token **tokens, int free_count);
+
 #endif //SIMPSHELL_PARSER_H

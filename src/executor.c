@@ -17,29 +17,9 @@
 
 #include "terminal.h"
 
-int execute_external(char **argv, const int is_background) {
+int execute_external(char **argv, const int is_background, const char *raw_cmd_string) {
     assert(argv != NULL);
     assert(argv[0] != NULL);
-
-    char cmd_string[1024] = {0};
-    size_t offset = 0;
-
-    for (int i = 0; argv[i] != NULL; i++) {
-        const size_t arg_len = strlen(argv[i]);
-
-        if (offset + arg_len + 2 >= sizeof(cmd_string)) {
-            break;
-        }
-
-        memcpy(cmd_string + offset, argv[i], arg_len);
-        offset += arg_len;
-
-        if (argv[i + 1] != NULL) {
-            cmd_string[offset++] = ' ';
-        }
-    }
-
-    cmd_string[offset] = '\0';
 
     const pid_t pid = fork();
 
@@ -89,7 +69,7 @@ int execute_external(char **argv, const int is_background) {
     }
 
     if (is_background) {
-        const int job_id = create_job(pgid, cmd_string);
+        const int job_id = create_job(pgid, raw_cmd_string);
 
         if (job_id != -1) {
             printf("[%d] %d\n", job_id, pgid);
@@ -143,11 +123,11 @@ int execute_external(char **argv, const int is_background) {
     }
 
     if (stopped) {
-        const int job_id = create_job(pgid, cmd_string);
+        const int job_id = create_job(pgid, raw_cmd_string);
 
         if (job_id != -1) {
             stop_job(job_id);
-            printf("\n[%d]  + suspended  %s\n", job_id, cmd_string);
+            printf("\n[%d]  + suspended  %s\n", job_id, raw_cmd_string);
         } else {
             fprintf(stderr, "Shell: maximum number of jobs exceeded\n");
         }

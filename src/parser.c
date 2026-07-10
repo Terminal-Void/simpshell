@@ -33,6 +33,18 @@ static int append_token(DynamicTokenList *tokens, TokenType type, char *text) {
     return 0;
 }
 
+static int is_word_boundary(char c) {
+    return c == '\0' ||
+           c == '/' ||
+           c == ' ' ||
+           c == '\t' ||
+           c == '|' ||
+           c == '<' ||
+           c == '>' ||
+           c == '&';
+}
+
+
 static int emit_word(DynamicTokenList *tokens, const DynamicString *word) {
     char *text = spawn_cstring_from_DynamicString(word);
     if (text == NULL) {
@@ -42,7 +54,7 @@ static int emit_word(DynamicTokenList *tokens, const DynamicString *word) {
     return append_token(tokens, TOK_WORD, text);
 }
 
-static int emit_operator(DynamicTokenList *tokens, TokenType type) {
+static int emit_operator(DynamicTokenList *tokens, const TokenType type) {
     return append_token(tokens, type, NULL);
 }
 
@@ -66,6 +78,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
     DynamicString *word = new_DynamicString(32);
     if (word == NULL) {
         free_DynamicTokenList(tokens);
+        tokens=NULL;
         return -1;
     }
 
@@ -79,13 +92,17 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                 i++;
                 if (append_char(word, input[i]) < 0) {
                     free_DynamicString(word);
+                    word = NULL;
                     free_DynamicTokenList(tokens);
+                    tokens=NULL;
                     return -1;
                 }
             } else {
                 if (append_char(word, c) < 0) {
                     free_DynamicString(word);
+                    word = NULL;
                     free_DynamicTokenList(tokens);
+                    tokens = NULL;
                     return -1;
                 }
             }
@@ -94,7 +111,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
         }
 
         //处理出现单引号的情况
-        //在双引号内，单引号可以直接移除，剩余部分按双引号内的字符逻辑处理
+        //在双引号内，单引号可以直接当作普通字符，剩余部分按双引号内的字符逻辑处理
         if (c == '\'' && in_dquote == 0) {
             in_squote = !in_squote;
             word_started = 1;
@@ -109,12 +126,47 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
             continue;
         }
 
+        //处理波浪号，出现在开头且后面是空或者/的展开，其他情况当作普通字符处理
+        if (c == '~' && in_squote == 0 && in_dquote == 0) {
+            if (!word_started && is_word_boundary(input[i+1])) {
+                const char *home = getenv("HOME");
+                if (home == NULL) {
+                    fprintf(stderr,"error parsing tilde: HOME environment variable not set\n");
+                    free_DynamicString(word);
+                    word = NULL;
+                    free_DynamicTokenList(tokens);
+                    tokens = NULL;
+                    return -1;
+                }
+                if(append_cstring(word, home) < 0) {
+                    free_DynamicString(word);
+                    word = NULL;
+                    free_DynamicTokenList(tokens);
+                    tokens = NULL;
+                    return -1;
+                }
+            }
+            else {
+                if (append_char(word, c) < 0) {
+                    free_DynamicString(word);
+                    word = NULL;
+                    free_DynamicTokenList(tokens);
+                    tokens = NULL;
+                    return -1;
+                }
+            }
+            word_started = 1;
+            continue;
+        }
+
         if (!in_squote && !in_dquote && (c == ' ' || c == '\t')) {
             // 这里应该 emit 当前 word
             if (word_started) {
                 if (emit_word(tokens, word) < 0) {
                     free_DynamicString(word);
+                    word = NULL;
                     free_DynamicTokenList(tokens);
+                    tokens = NULL;
                     return -1;
                 }
                 clear_DynamicString(word);
@@ -122,6 +174,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
             }
             continue;
         }
+
 
         // 普通状态下，识别特殊符号：| < > >> &
         if (!in_squote && !in_dquote && (c == '|' || c == '<' || c == '>' || c == '&')) {
@@ -131,7 +184,9 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
             if (word_started) {
                 if (emit_word(tokens, word) < 0) {
                     free_DynamicString(word);
+                    word = NULL;
                     free_DynamicTokenList(tokens);
+                    tokens = NULL;
                     return -1;
                 }
                 clear_DynamicString(word);
@@ -161,15 +216,21 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
 
             if (emit_operator(tokens, type) < 0) {
                 free_DynamicString(word);
+                word = NULL;
                 free_DynamicTokenList(tokens);
+                tokens = NULL;
                 return -1;
             }
             continue;
         }
+
+
         //处理普通字符
         if (append_char(word, c) < 0) {
             free_DynamicString(word);
+            word = NULL;
             free_DynamicTokenList(tokens);
+            tokens = NULL;
             return -1;
         }
         word_started = 1;
@@ -178,19 +239,24 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
     if (in_squote || in_dquote) {
         fprintf(stderr, "shell: unclosed quote\n");
         free_DynamicString(word);
+        word = NULL;
         free_DynamicTokenList(tokens);
+        tokens = NULL;
         return -1;
     }
 
     if (word_started) {
         if (emit_word(tokens, word) < 0) {
             free_DynamicString(word);
+            word = NULL;
             free_DynamicTokenList(tokens);
+            tokens = NULL;
             return -1;
         }
     }
 
     free_DynamicString(word);
+    word = NULL;
     *out_tokens = tokens;
     return 0;
 
@@ -239,82 +305,4 @@ int parse_tokens_as_command(const DynamicTokenList *tokens, char **cmd_argv,
     cmd_argv[argc] = NULL;
 
     return (int)argc;
-}
-
-int parse_command(char *input, char **cmd_argv, int *is_background) {
-    assert(input != NULL);
-    assert(cmd_argv != NULL);
-    assert(is_background != NULL);
-
-    int argc = 0;
-    *is_background = 0;
-
-    char *token = strtok(input, " \t");
-
-    while (token != NULL) {
-        if (argc >= MAX_ARGS - 1) {
-            fprintf(stderr, "shell: too many arguments\n");
-            cmd_argv[0] = NULL;
-            return -1;
-        }
-        cmd_argv[argc++] = token;
-        token = strtok(NULL, " \t");
-    }
-    cmd_argv[argc] = NULL;
-
-    if (argc == 0) {
-        return 0;
-    }
-
-    if (strcmp(cmd_argv[argc - 1], "&") == 0) {
-        *is_background = 1;
-        cmd_argv[argc - 1] = NULL;
-        argc--;
-    }
-
-    return argc;
-}
-
-void expand_tilde(char **argv, char **to_free, int *free_count) {
-    const char *home = getenv("HOME");
-    if (home == NULL) {
-        fprintf(stderr,"expand_tilde: HOME environment variable not set\n");
-        return;
-    }
-
-    for (int i=0; argv[i] != NULL; i++) {
-        if (strcmp(argv[i], "~") == 0 || strncmp(argv[i], "~/", 2) == 0) {
-            char buffer[1024];
-            snprintf(buffer, sizeof(buffer), "%s%s", home, argv[i]+1);
-
-            char *expanded = strdup(buffer); // 需要手动free
-            if (expanded == NULL) {
-                perror("strdup");
-                continue;
-            }
-
-            argv[i] = expanded;
-            to_free[*free_count] = argv[i];
-            (*free_count)++;
-        }
-    }
-}
-
-void free_expanded_args(char **to_free, const int free_count) {
-    assert(to_free != NULL);
-    for (int i = 0; i < free_count; i++) {
-        free(to_free[i]);
-    }
-    to_free = NULL;
-
-}
-
-void free_emitted_tokens(Token **tokens, const int free_count) {
-    assert(tokens != NULL);
-    for (int i = 0; i < free_count; i++) {
-        assert(tokens[i]!=NULL);
-        free(tokens[i]->text);
-        free(tokens[i]);
-    }
-    tokens = NULL;
 }
