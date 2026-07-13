@@ -164,51 +164,6 @@ int append_tokens(DynamicTokenList* target, Token *token) {
     return 0;
 }
 
-char* spawn_cmdstring_from_DynamicTokenList(const DynamicTokenList* source) {
-    assert(source != NULL);
-    DynamicString* dyn_cmdstring = new_DynamicString(32);
-    if(dyn_cmdstring == NULL) {
-        perror("malloc");
-        return NULL;
-    }
-    for (size_t i=0;i<source->cursor;i++) {
-        assert(source->tokens[i] != NULL);
-        if (i > 0 && append_char(dyn_cmdstring, ' ') < 0) {
-            free_DynamicString(dyn_cmdstring);
-            return NULL;
-        }
-        const Token *this_token = source->tokens[i];
-        int status = 0;
-        if (this_token->type == TOK_WORD) {
-            status=append_cstring(dyn_cmdstring,this_token->text);
-        }
-        else {
-            if (this_token->type == TOK_PIPE) {
-                status=append_char(dyn_cmdstring,'|');
-            }
-            else if (this_token->type == TOK_REDIR_IN) {
-                status=append_char(dyn_cmdstring,'<');
-            }
-            else if (this_token->type == TOK_REDIR_OUT) {
-                status=append_char(dyn_cmdstring,'>');
-            }
-            else if (this_token->type == TOK_REDIR_APP) {
-                status=append_cstring(dyn_cmdstring,">>");
-            }
-            else if (this_token->type == TOK_AMP) {
-                status=append_char(dyn_cmdstring,'&');
-            }
-        }
-        if (status!=0) {
-            free_DynamicString(dyn_cmdstring);
-            return NULL;
-        }
-    }
-    char* cmd_string = spawn_cstring_from_DynamicString(dyn_cmdstring);
-    free_DynamicString(dyn_cmdstring);
-    return cmd_string;
-}
-
 Pipeline *new_Pipeline(const size_t initial_cmd_n) {
     assert(initial_cmd_n > 0);
     Pipeline* pl = malloc(sizeof(*pl));

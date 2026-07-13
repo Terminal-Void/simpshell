@@ -7,7 +7,6 @@
 
 #include "parser.h"
 
-int execute_external(char **argv, int is_background, const char *raw_cmd_string);
 int execute_pipeline(const Pipeline *pipeline, const char *raw_command);
 
 #endif //SIMPSHELL_EXECUTOR_H

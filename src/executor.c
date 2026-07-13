@@ -75,6 +75,22 @@ static void close_pipeline_pipes(int (*pipes)[2], const size_t pipe_count) {
 static int connect_pipeline_fds(const size_t command_index,
                                 const size_t command_count,
                                 int (*pipes)[2]) {
+    if (command_count == 0 || command_index >= command_count) {
+        fprintf(stderr, "shell: invalid pipeline command index\n");
+        return -1;
+    }
+
+    // 单条命令不需要创建管道，此时 pipes == NULL 是正常状态。
+    if (command_count == 1) {
+        return 0;
+    }
+
+    // 多条命令必须已经成功创建 command_count - 1 个管道。
+    if (pipes == NULL) {
+        fprintf(stderr, "shell: pipeline descriptors are missing\n");
+        return -1;
+    }
+
     // 第 i 个命令从 pipe[i-1] 读取，并向 pipe[i] 写入：
     // cmd0 -> pipe0 -> cmd1 -> pipe1 -> cmd2
     if (command_index > 0 &&
@@ -246,132 +262,6 @@ static void terminate_pipeline(const pid_t pgid, const pid_t *pids,
     }
 }
 
-int execute_external(char **argv, const int is_background, const char *raw_cmd_string) {
-    assert(argv != NULL);
-    assert(argv[0] != NULL);
-    assert(raw_cmd_string != NULL);
-
-    char job_command[MAX_CMD_LEN];
-    format_job_command(job_command, sizeof(job_command),
-                       raw_cmd_string, is_background);
-
-    const pid_t pid = fork();
-
-    if (pid < 0) {
-        perror("fork");
-        return 1;
-    }
-
-    if (pid == 0) { //Child
-
-        if (setpgid(0, 0) < 0) {
-            perror("setpgid");
-            _exit(1);
-        }
-
-        //foreground child 也调用一次 tcsetpgrp()，parent 也调用一次，避免竞态
-        if (!is_background && is_shell_interactive()) {
-            if (give_terminal_to(getpid()) < 0) {
-                _exit(1);
-            }
-        }
-
-        //重置继承的信号行为
-        signal(SIGINT, SIG_DFL);
-        signal(SIGQUIT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
-        signal(SIGTTIN, SIG_DFL);
-        signal(SIGTTOU, SIG_DFL);
-        signal(SIGCHLD, SIG_DFL);
-
-        execvp(argv[0], argv);
-
-        perror(argv[0]);
-        _exit(127);
-    }
-
-    //Parent
-
-    const pid_t pgid = pid;
-
-    //Parent also calls setpgid to avoid a race with the child.
-    if (setpgid(pid, pgid) < 0) {
-        if (errno != EACCES && errno != ESRCH) {
-            perror("setpgid");
-            return 1;
-        }
-    }
-
-    if (is_background) {
-        const int job_id = create_job(pgid, job_command);
-
-        if (job_id != -1) {
-            printf("[%d] %d\n", job_id, pgid);
-        } else {
-            fprintf(stderr, "Shell: maximum number of jobs exceeded\n");
-        }
-
-        return 0;
-    }
-
-    /*
-     * Foreground job:
-     * give terminal to job's process group.
-     */
-    if (is_shell_interactive()) {
-        if (give_terminal_to(pgid) < 0) {
-            return 1;
-        }
-    }
-
-    int status;
-    int stopped = 0;
-
-    while (1) {
-        const pid_t waited = waitpid(-pgid, &status, WUNTRACED);
-
-        if (waited < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-
-            perror("waitpid");
-            break;
-        }
-
-        if (WIFSTOPPED(status)) {
-            stopped = 1;
-            break;
-        }
-
-        if (WIFEXITED(status) || WIFSIGNALED(status)) {
-            break;
-        }
-    }
-
-    /*
-     * Shell must reclaim terminal after foreground job exits or stops.
-     */
-    if (is_shell_interactive()) {
-        reclaim_terminal();
-    }
-
-    if (stopped) {
-        const int job_id = create_job(pgid, job_command);
-
-        if (job_id != -1) {
-            stop_job(job_id);
-            printf("\n[%d]  + suspended  %s\n", job_id, job_command);
-        } else {
-            fprintf(stderr, "Shell: maximum number of jobs exceeded\n");
-        }
-    }
-
-    return 0;
-}
-
-
-
 int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
     assert(pipeline != NULL);
     assert(pipeline->cursor > 0);
@@ -383,7 +273,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
 
     const size_t command_count = pipeline->cursor;
     const size_t pipe_count = command_count - 1;
-    Command *first_command = pipeline->cmd[0];
+    const Command *first_command = pipeline->cmd[0];
 
     BuiltinType first_builtin_type = BUILTIN_NONE;
     const BuiltinFunc first_builtin = get_builtin_func(
@@ -446,7 +336,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
         if (pid == 0) {
             // 第一个 child 以自身 PID 建立进程组；后续 child 加入该组。
             // 整条 Pipeline 因而能统一接收终端发送的 SIGINT/SIGTSTP。
-            const pid_t child_pgid = pgid == 0 ? getpid() : pgid;
+            const pid_t child_pgid = (pgid == 0) ? getpid() : pgid;
             if (setpgid(0, child_pgid) < 0) {
                 perror("setpgid");
                 _exit(1);
@@ -470,7 +360,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
         }
 
         if (pgid == 0) {
-            pgid = pid;
+            pgid = pid; // 父进程将子进程组pgid设为第一个子进程pid
         }
 
         // parent 也调用 setpgid，和 child 形成竞态保护：谁先运行都可以。
