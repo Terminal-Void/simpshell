@@ -22,17 +22,17 @@ typedef struct {
 
 typedef struct {
     char **argv;
-    int argc;
+    size_t argc;
     char *input_file;
     char *output_file;
     int append_output;
 } Command;
 
 typedef struct {
-    Command *cmds;
-    int cmd_count;
+    Command **cmd;
+    size_t cursor;
+    size_t capacity;
     int is_background;
-    char *raw_text;
 } Pipeline;
 
 typedef struct {
@@ -47,8 +47,9 @@ typedef struct {
     size_t capacity;
 } DynamicTokenList;
 
-int tokenize(const char *input, DynamicTokenList **out_tokens);
+DynamicTokenList* tokenize(const char *input);
 int parse_tokens_as_command(const DynamicTokenList *tokens, char **cmd_argv,
                             size_t max_args, int *is_background);
+Pipeline* create_pipeline_from_tokens(const DynamicTokenList *tokens);
 
 #endif //SIMPSHELL_PARSER_H

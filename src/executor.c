@@ -7,6 +7,7 @@
 #include "shell.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -17,9 +18,42 @@
 
 #include "terminal.h"
 
+static void format_job_command(char *destination, const size_t destination_size,
+                               const char *raw_command, const int is_background) {
+    assert(destination != NULL);
+    assert(destination_size > 0);
+    assert(raw_command != NULL);
+
+    size_t length = strlen(raw_command);
+
+    while (length > 0 && isspace((unsigned char)raw_command[length - 1])) {
+        length--;
+    }
+
+    // tokenize/parse 已确认这个末尾 & 是后台操作符，不是被引用的普通参数。
+    if (is_background && length > 0 && raw_command[length - 1] == '&') {
+        length--;
+        while (length > 0 && isspace((unsigned char)raw_command[length - 1])) {
+            length--;
+        }
+    }
+
+    if (length >= destination_size) {
+        length = destination_size - 1;
+    }
+
+    memcpy(destination, raw_command, length);
+    destination[length] = '\0';
+}
+
 int execute_external(char **argv, const int is_background, const char *raw_cmd_string) {
     assert(argv != NULL);
     assert(argv[0] != NULL);
+    assert(raw_cmd_string != NULL);
+
+    char job_command[MAX_CMD_LEN];
+    format_job_command(job_command, sizeof(job_command),
+                       raw_cmd_string, is_background);
 
     const pid_t pid = fork();
 
@@ -69,7 +103,7 @@ int execute_external(char **argv, const int is_background, const char *raw_cmd_s
     }
 
     if (is_background) {
-        const int job_id = create_job(pgid, raw_cmd_string);
+        const int job_id = create_job(pgid, job_command);
 
         if (job_id != -1) {
             printf("[%d] %d\n", job_id, pgid);
@@ -123,11 +157,11 @@ int execute_external(char **argv, const int is_background, const char *raw_cmd_s
     }
 
     if (stopped) {
-        const int job_id = create_job(pgid, raw_cmd_string);
+        const int job_id = create_job(pgid, job_command);
 
         if (job_id != -1) {
             stop_job(job_id);
-            printf("\n[%d]  + suspended  %s\n", job_id, raw_cmd_string);
+            printf("\n[%d]  + suspended  %s\n", job_id, job_command);
         } else {
             fprintf(stderr, "Shell: maximum number of jobs exceeded\n");
         }

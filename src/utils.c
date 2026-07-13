@@ -208,3 +208,70 @@ char* spawn_cmdstring_from_DynamicTokenList(const DynamicTokenList* source) {
     free_DynamicString(dyn_cmdstring);
     return cmd_string;
 }
+
+Pipeline *new_Pipeline(const size_t initial_cmd_n) {
+    assert(initial_cmd_n > 0);
+    Pipeline* pl = malloc(sizeof(*pl));
+    if(pl == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+    pl->cmd = malloc(initial_cmd_n*sizeof(*(pl->cmd)));
+    if(pl->cmd == NULL) {
+        perror("malloc");
+        free(pl);
+        return NULL;
+    }
+    pl->capacity = initial_cmd_n;
+    pl->cursor = 0;
+    pl->is_background = 0;
+    return pl;
+}
+
+int append_command(Pipeline* pipeline, Command* command) {
+    assert(pipeline != NULL);
+    assert(pipeline->cmd != NULL);
+    assert(command != NULL);
+
+    if (pipeline->cursor >= pipeline->capacity) {
+        const size_t new_capacity = pipeline->capacity * 2;
+        Command **new_commands = realloc(
+                pipeline->cmd,
+                new_capacity * sizeof(*pipeline->cmd));
+
+        if (new_commands == NULL) {
+            perror("realloc");
+            return -1;
+        }
+
+        pipeline->cmd = new_commands;
+        pipeline->capacity = new_capacity;
+    }
+
+    pipeline->cmd[pipeline->cursor++] = command;
+    return 0;
+}
+
+void free_Pipeline(Pipeline* pl) {
+    if (pl == NULL) {
+        return;
+    }
+    assert(pl->cmd != NULL);
+    for(size_t i = 0; i < pl->cursor; i++) {
+        Command *current_cmd = pl->cmd[i];
+        assert(current_cmd != NULL);
+        char **current_argv = current_cmd->argv;
+        for (size_t j = 0; j < current_cmd->argc; j++) {
+            char *current_arg = current_argv[j];
+            assert(current_arg != NULL);
+            free(current_arg);
+        }
+        free(current_argv);
+        free(current_cmd->input_file);
+        free(current_cmd->output_file);
+        free(current_cmd);
+
+    }
+    free(pl->cmd);
+    free(pl);
+}

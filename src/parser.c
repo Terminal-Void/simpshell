@@ -44,6 +44,14 @@ static int is_word_boundary(char c) {
            c == '&';
 }
 
+static int is_double_quote_escape_target(const char c) {
+    return c == '$' ||
+           c == '`' ||
+           c == '"' ||
+           c == '\\' ||
+           c == '\n';
+}
+
 
 static int emit_word(DynamicTokenList *tokens, const DynamicString *word) {
     char *text = spawn_cstring_from_DynamicString(word);
@@ -58,14 +66,12 @@ static int emit_operator(DynamicTokenList *tokens, const TokenType type) {
     return append_token(tokens, type, NULL);
 }
 
-int tokenize(const char *input, DynamicTokenList **out_tokens) {
+DynamicTokenList *tokenize(const char *input) {
     assert(input != NULL);
-    assert(out_tokens != NULL);
-    assert(*out_tokens == NULL);
 
     DynamicTokenList *tokens = new_DynamicTokenList(16);
     if (tokens == NULL) {
-        return -1;
+        return NULL;
     }
 
     int in_dquote = 0;
@@ -79,23 +85,25 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
     if (word == NULL) {
         free_DynamicTokenList(tokens);
         tokens=NULL;
-        return -1;
+        return NULL;
     }
 
     for (size_t i=0; input[i] != '\0'; i++) {
         const char c = input[i];
 
-        //处理反斜杠，
-        //单引号内反斜杠为普通字符，双引号内反斜杠正常发挥作用
+        // 单引号内反斜杠是普通字符；双引号内只转义 shell 规定的字符。
         if (c == '\\' && in_squote == 0) {
-            if (input[i+1] != '\0') {
+            const char next = input[i + 1];
+
+            if (next != '\0' &&
+                (!in_dquote || is_double_quote_escape_target(next))) {
                 i++;
                 if (append_char(word, input[i]) < 0) {
                     free_DynamicString(word);
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens=NULL;
-                    return -1;
+                    return NULL;
                 }
             } else {
                 if (append_char(word, c) < 0) {
@@ -103,7 +111,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
             }
             word_started = 1;
@@ -136,14 +144,14 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
                 if(append_cstring(word, home) < 0) {
                     free_DynamicString(word);
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
             }
             else {
@@ -152,7 +160,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
             }
             word_started = 1;
@@ -167,7 +175,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
                 clear_DynamicString(word);
                 word_started = 0;
@@ -187,7 +195,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                     word = NULL;
                     free_DynamicTokenList(tokens);
                     tokens = NULL;
-                    return -1;
+                    return NULL;
                 }
                 clear_DynamicString(word);
                 word_started = 0;
@@ -219,7 +227,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
                 word = NULL;
                 free_DynamicTokenList(tokens);
                 tokens = NULL;
-                return -1;
+                return NULL;
             }
             continue;
         }
@@ -231,7 +239,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
             word = NULL;
             free_DynamicTokenList(tokens);
             tokens = NULL;
-            return -1;
+            return NULL;
         }
         word_started = 1;
     }
@@ -242,7 +250,7 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
         word = NULL;
         free_DynamicTokenList(tokens);
         tokens = NULL;
-        return -1;
+        return NULL;
     }
 
     if (word_started) {
@@ -251,14 +259,13 @@ int tokenize(const char *input, DynamicTokenList **out_tokens) {
             word = NULL;
             free_DynamicTokenList(tokens);
             tokens = NULL;
-            return -1;
+            return NULL;
         }
     }
 
     free_DynamicString(word);
     word = NULL;
-    *out_tokens = tokens;
-    return 0;
+    return tokens;
 
 }
 
@@ -305,4 +312,160 @@ int parse_tokens_as_command(const DynamicTokenList *tokens, char **cmd_argv,
     cmd_argv[argc] = NULL;
 
     return (int)argc;
+}
+
+
+
+static Command *new_command(void) {
+    Command *command = calloc(1, sizeof(*command));
+    if (command == NULL) {
+        perror("calloc");
+        return NULL;
+    }
+
+    return command;
+}
+
+static int append_argument(Command *command, const char *argument) {
+    assert(command != NULL);
+    assert(argument != NULL);
+
+    char **new_argv = realloc(
+            command->argv,
+            (command->argc + 2) * sizeof(*command->argv));
+
+    if (new_argv == NULL) {
+        perror("realloc");
+        return -1;
+    }
+
+    command->argv = new_argv;
+    command->argv[command->argc] = strdup(argument);
+    if (command->argv[command->argc] == NULL) {
+        perror("strdup");
+        return -1;
+    }
+
+    command->argc++;
+    command->argv[command->argc] = NULL;
+    return 0;
+}
+
+static int set_redirection(char **target, const char *filename,
+                           const char *operator_name) {
+    assert(target != NULL);
+    assert(filename != NULL);
+    assert(operator_name != NULL);
+
+    if (*target != NULL) {
+        fprintf(stderr, "shell: duplicate %s redirection\n", operator_name);
+        return -1;
+    }
+
+    *target = strdup(filename);
+    if (*target == NULL) {
+        perror("strdup");
+        return -1;
+    }
+
+    return 0;
+}
+
+Pipeline *create_pipeline_from_tokens(const DynamicTokenList *tokens) {
+    assert(tokens != NULL);
+
+    if (tokens->cursor == 0) {
+        fprintf(stderr, "shell: empty pipeline\n");
+        return NULL;
+    }
+
+    Pipeline *pipeline = new_Pipeline(4);
+    if (pipeline == NULL) {
+        return NULL;
+    }
+
+    Command *current_command = new_command();
+    if (current_command == NULL || append_command(pipeline, current_command) < 0) {
+        free(current_command);
+        free_Pipeline(pipeline);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < tokens->cursor; i++) {
+        const Token *token = tokens->tokens[i];
+        assert(token != NULL);
+
+        if (token->type == TOK_WORD) {
+            if (append_argument(current_command, token->text) < 0) {
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+            continue;
+        }
+
+        if (token->type == TOK_PIPE) {
+            if (current_command->argc == 0) {
+                fprintf(stderr, "shell: empty command before pipe\n");
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+
+            current_command = new_command();
+            if (current_command == NULL ||
+                append_command(pipeline, current_command) < 0) {
+                free(current_command);
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+            continue;
+        }
+
+        if (token->type == TOK_AMP) {
+            if (i != tokens->cursor - 1) {
+                fprintf(stderr, "shell: & must appear at end\n");
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+
+            pipeline->is_background = 1;
+            continue;
+        }
+
+        if (i + 1 >= tokens->cursor ||
+            tokens->tokens[i + 1]->type != TOK_WORD) {
+            fprintf(stderr, "shell: expected filename after redirection\n");
+            free_Pipeline(pipeline);
+            return NULL;
+        }
+
+        const char *filename = tokens->tokens[++i]->text;
+
+        if (token->type == TOK_REDIR_IN) {
+            if (set_redirection(&current_command->input_file,
+                                filename, "input") < 0) {
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+        } else if (token->type == TOK_REDIR_OUT ||
+                   token->type == TOK_REDIR_APP) {
+            if (set_redirection(&current_command->output_file,
+                                filename, "output") < 0) {
+                free_Pipeline(pipeline);
+                return NULL;
+            }
+            current_command->append_output = token->type == TOK_REDIR_APP;
+        } else {
+            fprintf(stderr, "shell: unknown token type\n");
+            free_Pipeline(pipeline);
+            return NULL;
+        }
+    }
+
+    if (current_command->argc == 0) {
+        fprintf(stderr, "shell: pipeline command is empty\n");
+        free_Pipeline(pipeline);
+        return NULL;
+    }
+
+    return pipeline;
 }

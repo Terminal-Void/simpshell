@@ -24,7 +24,7 @@ static int format_cwd_with_tilde(const char *cwd, char *buf, size_t buf_size) {
         return written < 0 || (size_t)written >= buf_size ? -1 : 0;
     }
 
-    size_t home_len = strlen(home);
+    const size_t home_len = strlen(home);
 
     if (strcmp(cwd, home) == 0) {
         const int written = snprintf(buf, buf_size, "~");

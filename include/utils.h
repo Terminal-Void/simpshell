@@ -21,4 +21,8 @@ int append_tokens(DynamicTokenList* target, Token *token);
 int append_cstring(DynamicString* target, const char* cstring);
 char* spawn_cmdstring_from_DynamicTokenList(const DynamicTokenList* source);
 
+Pipeline* new_Pipeline(size_t initial_cmd_n);
+int append_command(Pipeline* pipeline, Command* command);
+void free_Pipeline(Pipeline* pipeline);
+
 #endif //SIMPSHELL_UTILS_H

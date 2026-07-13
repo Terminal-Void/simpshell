@@ -128,6 +128,8 @@ int builtin_clear(char **argv) {
 
 int builtin_jobs(char **argv) {
     (void)argv;
+    check_background_jobs();
+
     for (int i = 0; i < MAX_JOBS; i++) {
 
         Job *job = get_job_by_id(i+1);
@@ -147,6 +149,7 @@ int builtin_jobs(char **argv) {
 }
 
 int builtin_bg(char **argv) {
+    check_background_jobs();
 
     int job_id;
     const Job *job = parse_job_arg(argv,"bg",&job_id);
@@ -170,6 +173,8 @@ int builtin_bg(char **argv) {
 }
 
 int builtin_fg(char **argv) {
+    check_background_jobs();
+
     int job_id;
     const Job *job = parse_job_arg(argv,"fg",&job_id);
     //获取job，job_id

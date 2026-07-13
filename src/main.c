@@ -25,7 +25,8 @@ int main(const int argc, const char *argv[]) {
 
     init_shell();
 
-    char input[MAX_CMD_LEN];
+    char *input = NULL;
+    size_t input_capacity = 0;
     char *cmd_argv[MAX_ARGS];
 
     while (1) {
@@ -39,21 +40,33 @@ int main(const int argc, const char *argv[]) {
         print_prompt();
 
         // 2. 读取用户输入
-        if (fgets(input, MAX_CMD_LEN, stdin) == NULL) {
-            // 处理按下 Ctrl+D (EOF) 的情况：优雅退出
-            printf("\n");
+        errno = 0;
+        const ssize_t input_length = getline(&input, &input_capacity, stdin);
+        if (input_length < 0) {
+            if (errno == EINTR) {
+                clearerr(stdin);
+                continue;
+            }
+
+            if (ferror(stdin)) {
+                perror("getline");
+            } else {
+                // 处理按下 Ctrl+D (EOF) 的情况：优雅退出
+                printf("\n");
+            }
             break;
         }
 
         // 3. 去除字符串末尾的换行符
-        input[strcspn(input, "\n")] = '\0';
+        if (input_length > 0 && input[input_length - 1] == '\n') {
+            input[input_length - 1] = '\0';
+        }
 
         // 如果用户什么都没输直接按了回车，跳过本次循环
         if (strlen(input) == 0) { continue; }
 
-        DynamicTokenList *cmd_tokens=NULL;
-
-        if (tokenize(input, &cmd_tokens)<0) {
+        DynamicTokenList *cmd_tokens = tokenize(input);
+        if (cmd_tokens == NULL) {
             continue;
         }
 
@@ -79,5 +92,6 @@ int main(const int argc, const char *argv[]) {
         free_DynamicTokenList(cmd_tokens);
         cmd_tokens=NULL;
     }
+    free(input);
     return 0;
 }
