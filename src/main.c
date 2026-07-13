@@ -27,14 +27,12 @@ int main(const int argc, const char *argv[]) {
 
     char *input = NULL;
     size_t input_capacity = 0;
-    char *cmd_argv[MAX_ARGS];
 
     while (1) {
 
         check_background_jobs();
 
         //0. 准备有关变量
-        int is_background = 0;
 
         // 1. 打印Prompt
         print_prompt();
@@ -70,25 +68,19 @@ int main(const int argc, const char *argv[]) {
             continue;
         }
 
-        const int cmd_argc = parse_tokens_as_command(cmd_tokens, cmd_argv,
-                                                     ARRAY_SIZE(cmd_argv),
-                                                     &is_background);
-        if (cmd_argc <= 0) {
+        Pipeline *pipeline = create_pipeline_from_tokens(cmd_tokens);
+        if (pipeline == NULL) {
             free_DynamicTokenList(cmd_tokens);
             cmd_tokens=NULL;
             continue;
         }
 
-        const BuiltinFunc builtin_func = get_builtin_func(cmd_argv[0]);
+        execute_pipeline(pipeline, input);
 
-        if (builtin_func != NULL) {
-            builtin_func(cmd_argv);
-        }
-        else {
-            execute_external(cmd_argv,is_background,input);
-        }
-
-        // 释放内存
+        // Pipeline 已复制 argv/重定向字符串，与 TokenList 各自拥有内存，
+        // 所以执行结束后可以分别释放，不会产生悬空指针或 double free。
+        free_Pipeline(pipeline);
+        pipeline = NULL;
         free_DynamicTokenList(cmd_tokens);
         cmd_tokens=NULL;
     }
