@@ -8,7 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-//创建与初始化
+/*
+ * 本文件集中管理 parser 公共动态结构的分配与释放。
+ * TokenList/Pipeline 一旦成功接收元素，就同时接管该元素的所有权。
+ */
+
+// 创建一个始终保持 C 字符串结尾 '\0' 的可增长缓冲区。
 DynamicString* new_DynamicString(const size_t initial_capacity) {
     assert(initial_capacity > 0);
     DynamicString* ds = malloc(sizeof(*ds));
@@ -29,7 +34,6 @@ DynamicString* new_DynamicString(const size_t initial_capacity) {
     return ds;
 }
 
-//释放
 void free_DynamicString(DynamicString* ds) {
     assert(ds != NULL);
     assert(ds->dstr != NULL);
@@ -37,10 +41,8 @@ void free_DynamicString(DynamicString* ds) {
     free(ds);
 }
 
-//添加字符串
 int append_char(DynamicString* target,const char c) {
-    //cursor：本次即将写入的位置，即上次写入\0的位置
-    //capacity: 最大下标，含有\0的空间
+    // cursor 是当前长度，也是本次字符写入位置；capacity 是分配字节数。
     assert(target != NULL);
     assert(target->dstr != NULL);
     assert(target->cursor <= target->capacity);
@@ -79,7 +81,7 @@ int append_cstring(DynamicString* target, const char* cstring) {
     return 0;
 }
 
-//软清空内容
+// 只重置逻辑长度，保留已分配容量供下一个 Word 复用。
 void clear_DynamicString(DynamicString* target) {
     assert(target != NULL);
     assert(target->dstr != NULL);
@@ -89,7 +91,7 @@ void clear_DynamicString(DynamicString* target) {
     target->dstr[0] = '\0';
 }
 
-//从变长字符串中复制产生C风格字符串，需要手动free
+// 返回独立副本；调用方取得所有权并负责 free。
 char* spawn_cstring_from_DynamicString(const DynamicString* target) {
     assert(target != NULL);
     assert(target->dstr != NULL);
@@ -129,6 +131,7 @@ void free_DynamicTokenList(DynamicTokenList* dtl) {
         return;
     }
     assert(dtl->tokens != NULL);
+    // TokenList 同时拥有 Token 对象和其中的 text。
     for(size_t i = 0; i < dtl->cursor; i++) {
         assert(dtl->tokens[i] != NULL);
         free(dtl->tokens[i]->text);
@@ -157,7 +160,7 @@ int append_tokens(DynamicTokenList* target, Token *token) {
         target->capacity = new_capacity;
     }
 
-    //追加 token，补齐 NULL
+    // 成功后 token 所有权转交给列表，并继续维持结尾 NULL。
     target->tokens[target->cursor] = token;
     (target->cursor)++;
     target->tokens[target->cursor] = NULL;
@@ -212,6 +215,7 @@ void free_Pipeline(Pipeline* pl) {
         return;
     }
     assert(pl->cmd != NULL);
+    // Pipeline 递归拥有 Command、argv 字符串和重定向文件名。
     for(size_t i = 0; i < pl->cursor; i++) {
         Command *current_cmd = pl->cmd[i];
         assert(current_cmd != NULL);

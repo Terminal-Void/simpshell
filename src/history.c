@@ -29,9 +29,11 @@ int add_history_entry(const char *command) {
 
     size_t index;
     if (history_count < HISTORY_CAPACITY) {
+        // 未满时写入逻辑队尾，取模后可能回绕到数组前端。
         index = (history_start + history_count) % HISTORY_CAPACITY;
         history_count++;
     } else {
+        // 满时覆盖逻辑队头，并把 start 向后移动一个槽位。
         index = history_start;
         free(history_entries[index].command);
         history_start = (history_start + 1) % HISTORY_CAPACITY;

@@ -31,6 +31,7 @@ static int format_cwd_with_tilde(const char *cwd, char *buf, size_t buf_size) {
         return written < 0 || (size_t)written >= buf_size ? -1 : 0;
     }
 
+    // 必须检查路径分隔符，避免把 /home/user2 错误缩写成 ~2。
     if (strncmp(cwd, home, home_len) == 0 && cwd[home_len] == '/') {
         const int written = snprintf(buf, buf_size, "~%s", cwd + home_len);
         return written < 0 || (size_t)written >= buf_size ? -1 : 0;
@@ -44,6 +45,7 @@ void print_prompt(void) {
     char cwd[MAX_CMD_LEN];
     char display_cwd[MAX_CMD_LEN];
 
+    // 即使当前目录已被删除，Prompt 失败也不应结束整个 shell。
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         perror("getcwd");
         printf("SimpShell %% ");

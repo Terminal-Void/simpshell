@@ -8,12 +8,13 @@
 #define ALIAS_BUCKET_COUNT 64
 
 struct AliasEntry {
-    char *name;
-    char *value;
-    int in_use;
-    struct AliasEntry *next;
+    char *name;              // alias 表独占。
+    char *value;             // alias 表独占；LexerInput 只借用该指针。
+    int in_use;              // 当前输入栈中是否已有该 alias，防止递归。
+    struct AliasEntry *next; // 同一哈希桶内的冲突链。
 };
 
+// 静态存储自动初始化为 NULL；每个桶是一条单向链表。
 static AliasEntry *alias_table[ALIAS_BUCKET_COUNT];
 
 static size_t hash_alias_name(const char *name) {
@@ -75,6 +76,7 @@ int set_alias(const char *name, const char *value) {
 
     AliasEntry *entry = find_alias_entry(name);
     if (entry != NULL) {
+        // 先成功复制新值再释放旧值，内存不足时原 alias 仍保持有效。
         char *new_value = strdup(value);
         if (new_value == NULL) {
             perror("strdup");
@@ -111,6 +113,10 @@ int remove_alias(const char *name) {
     assert(name != NULL);
 
     const size_t bucket = hash_alias_name(name);
+    /*
+     * link 始终指向“当前节点由哪个指针引用”。使用二级指针后，删除
+     * 链表头和中间节点可以共用同一段代码，无需单独保存 previous。
+     */
     AliasEntry **link = &alias_table[bucket];
 
     while (*link != NULL) {

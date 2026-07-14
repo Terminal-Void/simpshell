@@ -53,6 +53,10 @@ int main(const int argc, const char *argv[]) {
     int exit_warning_shown = 0;
     int exit_status = 0;
 
+    /*
+     * REPL 每轮固定经过：刷新后台 Job -> 读取原始行 -> tokenize/展开 ->
+     * 构造 Pipeline -> 执行并保存状态 -> 释放本轮所有临时对象。
+     */
     while (1) {
         check_background_jobs();
         print_prompt();
@@ -98,6 +102,7 @@ int main(const int argc, const char *argv[]) {
 
         DynamicTokenList *cmd_tokens = tokenize(input);
         if (cmd_tokens == NULL) {
+            // 当前简化实现把 tokenize 失败统一映射为 shell 语法状态码 2。
             set_shell_last_status(2);
             exit_warning_shown = 0;
             continue;
@@ -117,6 +122,7 @@ int main(const int argc, const char *argv[]) {
         }
 
         const int command_status = execute_pipeline(pipeline, input);
+        // 下一轮 tokenize() 展开 $? 时读取这里保存的结果。
         set_shell_last_status(command_status);
 
         // Pipeline 已复制 argv/重定向字符串，与 TokenList 各自拥有内存，
@@ -137,6 +143,7 @@ int main(const int argc, const char *argv[]) {
         exit_warning_shown = 0;
     }
 
+    /* main 负责在统一退出路径中释放 getline 缓冲并清空全局数据表。 */
     free(input);
     free_aliases();
     free_history();

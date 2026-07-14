@@ -24,7 +24,10 @@ typedef struct {
     JobStatus status;
 } Job;
 
-//Job Control
+/*
+ * jobs.c 拥有固定大小的 Job 表和每个 Job 的 pids 数组。
+ * 调用方传入的 pids 只会被复制，不会转移所有权。
+ */
 
 int create_job(pid_t pgid, const char *cmd);
 int create_job_for_processes(pid_t pgid, const char *cmd,
@@ -33,11 +36,14 @@ void remove_job(int job_id);
 void run_job(int job_id);
 void stop_job(int job_id);
 void record_job_process_exit(int job_id, pid_t pid);
+// 非阻塞回收后台状态变化；通常在显示 Prompt 和 jobs 操作前调用。
 void check_background_jobs(void);
-// Job 表由 jobs.c 私有管理，其他模块通过下面两个接口显示或关闭任务。
+
+// Job 表由 jobs.c 私有管理，其他模块通过接口显示或关闭任务。
 void print_active_jobs(void);
 int shutdown_active_jobs(void);
 
+// 返回 jobs.c 内部对象的借用指针，不得 free；Job 删除后立即失效。
 Job *get_job_by_id(int job_id);
 int get_job_count(void);
 

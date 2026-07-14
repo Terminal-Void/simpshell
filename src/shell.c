@@ -5,6 +5,12 @@ static int exit_requested = 0;
 static int requested_exit_status = 0;
 static int last_status = 0;
 
+/*
+ * requested_exit_status 只在已经请求 exit/Ctrl+D 时有意义；last_status
+ * 始终表示最近执行结果，供 $? 和不带参数的 exit 使用。二者不能合并，
+ * 因为 active jobs 警告可能取消本次退出请求，但不应丢失上一条状态。
+ */
+
 void request_shell_exit(const int status) {
     exit_requested = 1;
     requested_exit_status = status;

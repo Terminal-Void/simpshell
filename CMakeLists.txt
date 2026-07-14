@@ -25,6 +25,7 @@ target_include_directories(simpshell PRIVATE
 )
 
 target_compile_definitions(simpshell PRIVATE
+        # 公开 getline、setenv、utimensat、clock_gettime 等 POSIX.1-2008 接口。
         _POSIX_C_SOURCE=200809L
 )
 

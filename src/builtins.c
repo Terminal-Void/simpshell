@@ -36,7 +36,7 @@ typedef struct {
     BuiltinType type;
 } BuiltinCommand;
 
-//Built-ins
+// 修改 shell 核心状态或提供基础用户功能的 builtins。
 static int builtin_cd(char **argv);
 static int builtin_exit(char **argv);
 static int builtin_pwd(char **argv);
@@ -51,28 +51,28 @@ static int builtin_unalias(char **argv);
 static int builtin_history(char **argv);
 static int builtin_sleep(char **argv);
 
-//Special Built-ins
-
-
-
-//Additional Built-ins
+// 课程要求的简化文件系统 builtins。
 static int builtin_ls(char **argv);
 static int builtin_mkdir(char **argv);
 static int builtin_rmdir(char **argv);
 static int builtin_touch(char **argv);
 static int builtin_rm(char **argv);
 
-//Job Control Built-ins
+// 必须访问父 shell Job 表和控制终端的 Job Control builtins。
 int builtin_jobs(char **argv);
 int builtin_bg(char **argv);
 int builtin_fg(char **argv);
 int builtin_wait(char **argv);
 
-//helper
+// 多个 builtin 共用的参数解析辅助函数。
 static Job *parse_job_arg(char **argv, const char *builtin_name, int *job_id_out);
 static int get_operand_start(char **argv, const char *builtin_name);
 static int wait_for_job(Job *job, int job_id);
 
+/*
+ * 注册表同时决定函数入口和执行位置。BUILTIN_PARENT 表示单独前台执行
+ * 时必须留在父 shell，才能保留目录、环境、alias 或 Job 表变化。
+ */
 BuiltinCommand builtins[] = {
     {"cd", builtin_cd, BUILTIN_PARENT},
     {"exit", builtin_exit, BUILTIN_PARENT},
@@ -117,6 +117,7 @@ int builtin_cd(char **argv) {
         return 1;
     }
 
+    // chdir 前保存旧目录，成功后用它维护 OLDPWD。
     char old_cwd[PATH_MAX];
     if (getcwd(old_cwd, sizeof(old_cwd)) == NULL) {
         perror("cd: getcwd");
@@ -228,6 +229,7 @@ static int is_valid_identifier(const char *name, const size_t length) {
 static int builtin_export(char **argv) {
     if (argv[1] == NULL) {
         extern char **environ;
+        // environ 是当前进程环境，fork/exec 后会被外部命令继承。
         for (char **entry = environ; *entry != NULL; entry++) {
             printf("%s\n", *entry);
         }
@@ -320,6 +322,7 @@ static int builtin_alias(char **argv) {
 
     int result = 0;
     for (size_t i = 1; argv[i] != NULL; i++) {
+        // argv[i] 已是去引号/展开后的完整参数，按第一个 '=' 分割名称和值。
         const char *equals = strchr(argv[i], '=');
         if (equals == NULL) {
             const char *value = get_alias(argv[i]);
@@ -435,6 +438,12 @@ static int builtin_source(char **argv) {
     size_t capacity = 0;
     int result = 0;
 
+    /*
+     * source 不创建第二套解释器：逐行复用 tokenize -> Pipeline -> executor。
+     * 独立前台调用时它运行在 parent，cd/export/alias 会作用于当前 shell；
+     * 若 source 被放进 Pipeline/后台，则这些变化只存在于对应 child。
+     * 每行执行后都立即更新该进程中的 $?，供文件下一行展开。
+     */
     while (1) {
         errno = 0;
         const ssize_t length = getline(&line, &capacity, file);
@@ -621,6 +630,7 @@ static int builtin_touch(char **argv) {
 
     int result = 0;
     for (int i = start; argv[i] != NULL; i++) {
+        // 文件存在时直接更新时间；不存在时再用 O_EXCL 原子创建。
         if (utimensat(AT_FDCWD, argv[i], NULL, 0) == 0) {
             continue;
         }
@@ -633,6 +643,7 @@ static int builtin_touch(char **argv) {
 
         const int fd = open(argv[i], O_WRONLY | O_CREAT | O_EXCL, 0666);
         if (fd < 0) {
+            // 检查与创建之间可能被其他进程创建，EEXIST 时重试更新时间。
             if (errno == EEXIST && utimensat(AT_FDCWD, argv[i], NULL, 0) == 0) {
                 continue;
             }
@@ -740,29 +751,28 @@ int builtin_fg(char **argv) {
 
     int job_id;
     const Job *job = parse_job_arg(argv,"fg",&job_id);
-    //获取job，job_id
 
-    if (job == NULL) {//job不存在(状态为DONE)
+    if (job == NULL) {
         return 1;
     }
 
     const pid_t target_pgid = job->pgid;
     printf("%s\n", job->cmd);
 
-    //先将终端给即将fg的job
+    // 先交出控制终端，之后 Ctrl+C/Ctrl+Z 才会发送给目标进程组。
     if (give_terminal_to(job->pgid)<0) {
         return 1;
     }
 
-    //无论当前状态为RUNNING/STOPPED，均发送SIGCONT
+    // 无论原状态为 RUNNING/STOPPED 都发送 SIGCONT，统一恢复执行。
     if (kill(-target_pgid, SIGCONT) < 0) {
         perror("fg: kill");
-        //如果失败，重新拿回终端
+        // 恢复失败时立即把终端还给 shell。
         reclaim_terminal();
         return 1;
     }
 
-    //记录状态为RUNNING
+    // Job 表同步标记为 RUNNING。
     run_job(job_id);
 
     // 等待整个 job，而不是任意一个进程退出后就提前返回。
@@ -801,7 +811,7 @@ int builtin_fg(char **argv) {
         return 1;
     }
 
-    //等待结束，如果是正常退出，从 job_table 里把它标记为 DONE
+    // 根据“再次停止”或“全部退出”决定保留还是删除 Job 槽位。
     if (stopped) {
         // 如果是在前台运行时，用户又按了 Ctrl+Z 把它冻结了
         stop_job(job_id);

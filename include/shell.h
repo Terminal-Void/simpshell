@@ -11,7 +11,11 @@
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-// exit builtin 只设置请求，由 main() 在释放当前命令资源后统一退出。
+/*
+ * exit 请求状态与 last_status 相互独立：前者描述“是否准备离开 shell”，
+ * 后者描述“上一条命令结果”。exit builtin 只设置请求，main() 在释放
+ * Token/Pipeline 并处理 active jobs 后才真正结束进程。
+ */
 void request_shell_exit(int status);
 int is_shell_exit_requested(void);
 int get_shell_exit_status(void);

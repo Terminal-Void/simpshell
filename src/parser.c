@@ -16,6 +16,10 @@
 
 
 static int append_token(DynamicTokenList *tokens, TokenType type, char *text) {
+    /*
+     * text 的所有权随 Token 一起转交给 TokenList。任一步失败时由本函数
+     * 负责释放，调用方无需区分 Token 分配失败还是列表扩容失败。
+     */
     Token *token = malloc(sizeof(*token));
     if (token == NULL) {
         perror("malloc");
@@ -39,7 +43,7 @@ static int append_token(DynamicTokenList *tokens, TokenType type, char *text) {
  * 参数展开需要知道字符原来处于哪种引用环境：
  *
  * - 未引用字符中的 $VAR 会展开，并允许进行简化的空白字段分割；
- * - 单引号和反斜杠保护的字符完全按字面量处理；
+ * - 单引号、反斜杠保护的字符及已完成的波浪号展开按字面量处理；
  * - 双引号中的 $VAR 会展开，但展开结果保持在同一个参数中。
  *
  * Token 最终仍然只保存展开后的字符串，这些模式只在 tokenize()
@@ -52,17 +56,18 @@ typedef enum {
 } WordCharMode;
 
 typedef struct {
-    char *text;
-    unsigned char *modes;
-    size_t *empty_quote_positions;
+    char *text;          // 去除引号后的原始 Word，参数尚未展开。
+    unsigned char *modes;// text 中每个字符对应的 WordCharMode。
+    size_t *empty_quote_positions; // ''/"" 这种零宽引用在 text 中的位置。
     size_t length;
     size_t capacity;
     size_t empty_quote_count;
     size_t empty_quote_capacity;
-    int started;
-    int alias_eligible;
+    int started;        // 即使 text 为空，出现过空引号也算 Word 已开始。
+    int alias_eligible; // 出现引用、转义或波浪号展开后禁止 alias 匹配。
 } WordBuffer;
 
+/* 一个 Word 完成参数展开和字段分割后，可能产生 0、1 或多个 argv 字段。 */
 typedef struct {
     char **items;
     size_t count;
@@ -166,6 +171,10 @@ static int word_buffer_append_cstring(WordBuffer *word, const char *text,
 }
 
 static int word_buffer_record_empty_quote(WordBuffer *word) {
+    /*
+     * 空引号不产生字符，却可能强制保留空参数，并会截断变量名扫描。
+     * 记录其零宽位置，展开阶段才能区分 `${X}""` 与 `""${X}`。
+     */
     if (word->empty_quote_count == word->empty_quote_capacity) {
         const size_t new_capacity = word->empty_quote_capacity == 0
                                     ? 4
@@ -312,8 +321,8 @@ static int lexer_push_input(Lexer *lexer, const char *text,
                             AliasEntry *alias, const int add_separator) {
     /*
      * LexerInput 对象由输入栈拥有，在 lexer_pop_input() 中释放。
-     * text 和 alias 只是借用：根层的 text 属于 main()，alias 层的
-     * text 属于 AliasEntry，AliasEntry 由全局 alias 表负责释放。
+     * text 和 alias 只是借用：根层 text 属于 tokenize() 的调用方
+     * （main 或 source），alias 层 text 属于全局 AliasEntry。
      */
     LexerInput *input = calloc(1, sizeof(*input));
     if (input == NULL) {
@@ -473,6 +482,10 @@ static int append_parameter_value(ExpandedFields *fields,
 
     for (size_t i = 0; value[i] != '\0'; i++) {
         if (split_fields && is_field_separator(value[i])) {
+            /*
+             * 只有“未引用参数展开产生的空白”参与这里的字段分割；
+             * 用户直接输入的空白已在 tokenizer 主循环中结束 Word。
+             */
             if (current_field->cursor > 0) {
                 if (append_expanded_field(fields, current_field) < 0) {
                     return -1;
@@ -673,7 +686,7 @@ static int finish_word(DynamicTokenList *tokens, const WordBuffer *word,
      *
      * 返回值：
      *   -1：发生错误；
-     *    0：已经生成普通 TOK_WORD；
+     *    0：Word 已处理完成，参数展开后可能生成 0、1 或多个 TOK_WORD；
      *    1：当前 Word 是 alias，已压入新的输入层，没有生成 Token。
      */
     char *alias_name = strdup(word->text);
@@ -706,6 +719,7 @@ static int finish_word(DynamicTokenList *tokens, const WordBuffer *word,
         }
     }
 
+    /* alias 没有命中后才做参数展开，避免 `$CMD` 的结果再次触发 alias。 */
     ExpandedFields fields = {0};
     if (expand_word_fields(word, &fields) < 0) {
         free(alias_name);
@@ -785,8 +799,10 @@ DynamicTokenList *tokenize(const char *input) {
     size_t dquote_start = 0;
     size_t squote_start = 0;
 
-    //处理 backslash dquote squote pipe redir_io amp
-    //处理优先级 backslash > squote > dquote > 其他
+    /*
+     * 扫描优先级：反斜杠先决定下一个字符是否为字面量；随后更新单双
+     * 引号状态；只有不在引号中时，空白和 | < > & 才具有语法含义。
+     */
 
     WordBuffer word;
     if (word_buffer_init(&word, 32) < 0) {
@@ -876,7 +892,7 @@ DynamicTokenList *tokenize(const char *input) {
             continue;
         }
 
-        //处理波浪号，出现在开头且后面是空或者/的展开，其他情况当作普通字符处理
+        // 波浪号只在 Word 开头且后接 / 或 Token 边界时展开。
         if (c == '~' && in_squote == 0 && in_dquote == 0) {
             if (!word.started && is_word_boundary(lexer_peek(&lexer))) {
                 const char *home = getenv("HOME");
@@ -1039,6 +1055,7 @@ int parse_tokens_as_command(const DynamicTokenList *tokens, char **cmd_argv,
 
 
 static Command *new_command(void) {
+    // calloc 让 argv 和重定向指针天然从 NULL 开始，便于统一错误清理。
     Command *command = calloc(1, sizeof(*command));
     if (command == NULL) {
         perror("calloc");
@@ -1062,6 +1079,7 @@ static int append_argument(Command *command, const char *argument) {
     }
 
     command->argv = new_argv;
+    // Command 深拷贝参数，不依赖 TokenList 中文本的生命周期。
     command->argv[command->argc] = strdup(argument);
     if (command->argv[command->argc] == NULL) {
         perror("strdup");
@@ -1084,6 +1102,7 @@ static int set_redirection(char **target, const char *filename,
         return -1;
     }
 
+    // 与 argv 相同，重定向文件名也由 Command 独占一份副本。
     *target = strdup(filename);
     if (*target == NULL) {
         perror("strdup");
@@ -1101,6 +1120,10 @@ Pipeline *create_pipeline_from_tokens(const DynamicTokenList *tokens) {
         return NULL;
     }
 
+    /*
+     * 先创建第一条空 Command，随后单次扫描 TokenList：Word 追加 argv，
+     * pipe 切换到下一条 Command，重定向消费紧随其后的文件名 Token。
+     */
     Pipeline *pipeline = new_Pipeline(4);
     if (pipeline == NULL) {
         return NULL;

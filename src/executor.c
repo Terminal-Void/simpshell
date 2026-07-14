@@ -163,6 +163,10 @@ static int validate_pipeline_builtins(const Pipeline *pipeline) {
     for (size_t i = 0; i < pipeline->cursor; i++) {
         const char *name = pipeline->cmd[i]->argv[0];
         if (is_job_control_builtin(name)) {
+            /*
+             * fg/bg/wait 必须操作父 shell 的 Job 表和控制终端；放进 child
+             * 即使调用成功，也只能修改 fork 出来的私有副本，因此直接拒绝。
+             */
             fprintf(stderr, "%s: cannot be used in a pipeline or background job\n",
                     name);
             return -1;
@@ -195,13 +199,14 @@ static void execute_command_in_child(const Command *command) {
     execvp(command->argv[0], command->argv);
     const int saved_errno = errno;
     perror(command->argv[0]);
+    // shell 约定：找不到命令为 127，找到但不能执行为 126。
     _exit(saved_errno == ENOENT || saved_errno == ENOTDIR ? 127 : 126);
 }
 
 static int execute_builtin_in_parent(const Command *command,
                                      const BuiltinFunc builtin) {
     // 单独的 cd/exit 等 builtin 必须在父 shell 中运行。
-    // 为支持 `pwd > file`，先保存 shell 的标准 fd，执行后再恢复。
+    // parent builtin 仍可带重定向，因此先保存 shell 的标准 fd，执行后恢复。
     const int saved_stdin = dup(STDIN_FILENO);
     if (saved_stdin < 0) {
         perror("dup stdin");
@@ -248,6 +253,10 @@ static int execute_builtin_in_parent(const Command *command,
 
 static void terminate_pipeline(const pid_t pgid, const pid_t *pids,
                                const size_t process_count) {
+    /*
+     * fork 中途失败时，已经创建的 child 不能遗留在后台。先按进程组
+     * 终止整条 Pipeline，再逐个 waitpid 回收，避免僵尸进程。
+     */
     if (pgid > 0) {
         kill(-pgid, SIGTERM);
         // stopped 进程要先继续运行，才能处理尚未递送的 SIGTERM。
@@ -268,6 +277,12 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
     assert(pipeline->cursor > 0);
     assert(raw_command != NULL);
 
+    /*
+     * 执行分为两条路径：
+     *
+     * 1. 单独前台 BUILTIN_PARENT：留在 parent，执行前临时应用重定向；
+     * 2. 其他命令：创建 pipe 和进程组，每个 Command fork 一个 child。
+     */
     if (validate_pipeline_builtins(pipeline) < 0) {
         return 1;
     }
@@ -397,6 +412,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
             return 1;
         }
 
+        // 后台启动成功即返回 0；后续状态由 Job 表回收，不改写当前 $?。
         printf("[%d] %d\n", job_id, pgid);
         free(pids);
         return 0;
@@ -411,6 +427,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
     size_t remaining = created_count;
     int stopped = 0;
     int result = 0;
+    // 未实现 pipefail 时，Pipeline 状态按 shell 默认规则取最后一个命令。
     const pid_t last_pid = pids[command_count - 1];
 
     // waitpid(-pgid, ...) 等待该进程组中的任意 child。

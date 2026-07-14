@@ -18,15 +18,17 @@ void init_shell(void) {
     shell_terminal = STDIN_FILENO;
     interactive_shell = isatty(shell_terminal);
 
-    if (!interactive_shell) { return; }
-    //判断是否为Interactive Shell，即检查fd=STDIN_FILENO是否指向终端
-    //只有Interactive Shell才启用job control.
+    // 非交互输入没有控制终端，不能调用 tcsetpgrp 等 Job Control 接口。
+    if (!interactive_shell) {
+        return;
+    }
 
-
+    /*
+     * shell 自己也可能由另一个 shell 启动在后台。只有当前进程组已经是
+     * 终端前台组时，才有资格接管终端；否则向自身进程组发送 SIGTTIN，
+     * 等外层 shell 执行 fg 后再从这里继续检查。
+     */
     while (1) {
-        //检查当前 shell 是否为终端的前台进程组
-        //若当前 shell 还不是终端（fd=STDIN_FILENO指向终端）的前台进程组，就主动把自己停住；
-        //等外层 shell 用 fg 把它放回前台后，从 kill() 后面继续执行，然后重新检查
         const pid_t terminal_pgid = tcgetpgrp(shell_terminal);
         if (terminal_pgid < 0) {
             perror("tcgetpgrp");
@@ -45,6 +47,10 @@ void init_shell(void) {
         }
     }
 
+    /*
+     * Prompt 所在的 shell 不应被 Ctrl+C/Ctrl+Z 杀死或停止；真正执行
+     * 命令的 child 会在 fork 后恢复这些信号的默认处理方式。
+     */
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
@@ -53,27 +59,24 @@ void init_shell(void) {
     signal(SIGCHLD, SIG_DFL);
 
 
+    // 让 shell 成为独立进程组 leader，之后才能和每条 Job 进程组分离。
     shell_pgid = getpid();
-    //把 shell 自己放进一个独立的 process group，并让 shell 成为这个 process group 的 leader。
     if (setpgid(shell_pgid, shell_pgid) < 0) {
         if (errno == EPERM && getpgrp() == shell_pgid) {
-            //有些启动器/IDE环境运行时可能已经将进程放进一个独立的 process group，并让 shell 成为这个 process group 的 leader
-            //如果是这种情况可以继续
+            // IDE/启动器可能已经完成相同设置，此时可以继续。
         } else {
             perror("setpgid");
             exit(EXIT_FAILURE);
         }
     }
 
-    //把当前终端的前台进程组设置为 shell 自己的 PGID。
-    // 把终端的 foreground process group 设置为 shell 的 process group
+    // Prompt 显示前，终端前台进程组必须是 shell 自己。
     if (tcsetpgrp(shell_terminal, shell_pgid) < 0) {
         perror("tcsetpgrp");
         exit(EXIT_FAILURE);
     }
 
-    //保存 shell 当前的终端模式
-    //因为很多前台程序会修改终端模式，shell 需要能自行恢复自己的 terminal mode
+    // 前台程序可能修改回显/规范模式；保存基准状态供 reclaim_terminal 恢复。
     if (tcgetattr(shell_terminal, &shell_tmodes) < 0) {
         perror("tcgetattr");
         exit(EXIT_FAILURE);
@@ -98,6 +101,7 @@ int give_terminal_to(pid_t pgid) {
         return 0;
     }
 
+    // 内核会把终端生成的 Ctrl+C/Ctrl+Z 信号发送给这个前台进程组。
     if (tcsetpgrp(get_shell_terminal(), pgid) < 0) {
         perror("tcsetpgrp");
         return -1;
@@ -111,6 +115,7 @@ int reclaim_terminal(void) {
         return 0;
     }
 
+    // Job 退出或停止后，先收回终端，再恢复 shell 保存的 termios。
     if (tcsetpgrp(get_shell_terminal(), get_shell_pgid()) < 0) {
         perror("tcsetpgrp");
         return -1;

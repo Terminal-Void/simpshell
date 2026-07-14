@@ -14,6 +14,10 @@
 
 #include "shell.h"
 
+/*
+ * 静态数组会被零初始化，而 DONE 的枚举值正好为 0，因此启动时所有
+ * 槽位天然空闲。Job 表拥有每个槽位中的 pids 动态数组。
+ */
 static Job job_table[MAX_JOBS];
 static int job_count = 0;
 
@@ -21,7 +25,7 @@ static int job_count = 0;
 #define SHUTDOWN_GRACE_MS 250
 #define SHUTDOWN_POLL_NS 10000000L
 
-//通过job_id返回对应job指针
+// 返回内部借用指针；remove_job() 后该槽位内容不再代表原 Job。
 Job *get_job_by_id(const int job_id) {
     const int index = job_id - 1;
     assert(job_id>0 && job_id <= MAX_JOBS);
@@ -42,7 +46,7 @@ int create_job_for_processes(const pid_t pgid, const char *cmd,
         // 如果这个槽位是空的，或者任务已经 DONE 被清理了
         if (job_table[i].status == DONE) {
             const int job_id = i+1;
-            job_table[i].job_id=job_id;
+            job_table[i].job_id = job_id;
             job_table[i].pgid = pgid;
             // Job 拥有自己的 PID 数组副本，避免依赖 executor 的临时内存。
             job_table[i].pids = calloc(process_count, sizeof(*job_table[i].pids));
@@ -51,6 +55,10 @@ int create_job_for_processes(const pid_t pgid, const char *cmd,
                 return -1;
             }
 
+            /*
+             * pids 中为 0 的位置表示该进程在转交 Job 表前已经退出；
+             * live_count 只统计仍需等待的 child。
+             */
             for (size_t j = 0; j < process_count; j++) {
                 job_table[i].pids[j] = pids[j];
                 if (pids[j] > 0) {
@@ -66,10 +74,9 @@ int create_job_for_processes(const pid_t pgid, const char *cmd,
 
             job_table[i].process_count = process_count;
             job_table[i].status = RUNNING;
-            strncpy(job_table[i].cmd,cmd,sizeof(job_table[i].cmd)-1);
+            strncpy(job_table[i].cmd, cmd, sizeof(job_table[i].cmd) - 1);
             job_table[i].cmd[sizeof(job_table[i].cmd) - 1] = '\0';
-            // 正常情况下不会产生作用，因cmd小于MAX_CMD_LEN，
-            // 不会出现strncpy因为cmd长度大于sizeof(job_table[i].cmd)-1而截断不添加\0的情况
+            // 无论输入是否被截断，都显式保证结尾 '\0'。
             job_count++;
             return job_id;
         }
@@ -153,6 +160,7 @@ static void handle_job_wait_status(const pid_t pid, const int status,
 
     const int job_id = job->job_id;
 
+    /* 一个 wait status 只会落入 exited/signaled/stopped/continued 之一。 */
     if (WIFEXITED(status) || WIFSIGNALED(status)) {
         record_job_process_exit(job_id, pid);
         // Pipeline leader 退出不代表整个 Job 结束；必须等待 live_count 归零。
