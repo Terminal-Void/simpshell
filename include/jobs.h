@@ -34,6 +34,9 @@ void run_job(int job_id);
 void stop_job(int job_id);
 void record_job_process_exit(int job_id, pid_t pid);
 void check_background_jobs(void);
+// Job 表由 jobs.c 私有管理，其他模块通过下面两个接口显示或关闭任务。
+void print_active_jobs(void);
+int shutdown_active_jobs(void);
 
 Job *get_job_by_id(int job_id);
 int get_job_count(void);

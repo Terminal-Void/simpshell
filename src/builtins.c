@@ -122,10 +122,9 @@ int builtin_cd(char **argv) {
 
 int builtin_exit(char **argv) {
     (void)argv;
-    printf("Bye!\n");
-    exit(0); // 直接终止整个 Shell 进程
-    //todo: 处理bg进程
-
+    // 不能在这里直接 exit()，否则 main() 无法释放 Pipeline、Token 和输入缓冲。
+    request_shell_exit(0);
+    return 0;
 }
 
 int builtin_pwd(char **argv) {
@@ -163,9 +162,8 @@ static int is_valid_identifier(const char *name, const size_t length) {
 }
 
 static int builtin_export(char **argv) {
-    extern char **environ;
-
     if (argv[1] == NULL) {
+        extern char **environ;
         for (char **entry = environ; *entry != NULL; entry++) {
             printf("%s\n", *entry);
         }
@@ -175,7 +173,7 @@ static int builtin_export(char **argv) {
     int result = 0;
 
     for (size_t i = 1; argv[i] != NULL; i++) {
-        char *equals = strchr(argv[i], '=');
+        const char *equals = strchr(argv[i], '=');
         const size_t name_length = equals == NULL
                                    ? strlen(argv[i])
                                    : (size_t)(equals - argv[i]);
@@ -273,6 +271,11 @@ static int builtin_source(char **argv) {
         result = execute_pipeline(pipeline, line);
         free_Pipeline(pipeline);
         free_DynamicTokenList(tokens);
+
+        // source 与当前 shell 共用状态；遇到 exit 后不能继续执行后续行。
+        if (is_shell_exit_requested()) {
+            break;
+        }
     }
 
     free(line);
@@ -494,22 +497,7 @@ static int builtin_rm(char **argv) {
 int builtin_jobs(char **argv) {
     (void)argv;
     check_background_jobs();
-
-    for (int i = 0; i < MAX_JOBS; i++) {
-
-        Job *job = get_job_by_id(i+1);
-
-        if (job == NULL) {
-            continue;
-        }
-
-        // 模仿真实 Shell 的输出格式
-        printf("[%d] %d %s\t\t%s\n",
-               job->job_id,
-               job->pgid,
-               job->status == RUNNING ? "Running" : "Stopped",
-               job->cmd);
-    }
+    print_active_jobs();
     return 0;
 }
 

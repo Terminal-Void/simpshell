@@ -11,5 +11,10 @@
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+// exit builtin 只设置请求，由 main() 在释放当前命令资源后统一退出。
+void request_shell_exit(int status);
+int is_shell_exit_requested(void);
+int get_shell_exit_status(void);
+void clear_shell_exit_request(void);
 
 #endif //SIMPSHELL_SHELL_H
