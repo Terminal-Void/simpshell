@@ -173,7 +173,7 @@ int builtin_exit(char **argv) {
         return 1;
     }
 
-    long status = 0;
+    long status = get_shell_last_status();
     if (argv[1] != NULL) {
         char *endptr;
         errno = 0;
@@ -416,7 +416,7 @@ static int builtin_exec(char **argv) {
     execvp(argv[1], &argv[1]);
     const int saved_errno = errno;
     perror(argv[1]);
-    return saved_errno == ENOENT ? 127 : 126;
+    return saved_errno == ENOENT || saved_errno == ENOTDIR ? 127 : 126;
 }
 
 static int builtin_source(char **argv) {
@@ -459,18 +459,26 @@ static int builtin_source(char **argv) {
 
         DynamicTokenList *tokens = tokenize(line);
         if (tokens == NULL) {
-            result = 1;
+            result = 2;
+            set_shell_last_status(result);
+            continue;
+        }
+
+        if (tokens->cursor == 0) {
+            free_DynamicTokenList(tokens);
             continue;
         }
 
         Pipeline *pipeline = create_pipeline_from_tokens(tokens);
         if (pipeline == NULL) {
             free_DynamicTokenList(tokens);
-            result = 1;
+            result = 2;
+            set_shell_last_status(result);
             continue;
         }
 
         result = execute_pipeline(pipeline, line);
+        set_shell_last_status(result);
         free_Pipeline(pipeline);
         free_DynamicTokenList(tokens);
 

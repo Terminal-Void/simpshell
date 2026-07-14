@@ -193,8 +193,9 @@ static void execute_command_in_child(const Command *command) {
     }
 
     execvp(command->argv[0], command->argv);
+    const int saved_errno = errno;
     perror(command->argv[0]);
-    _exit(127);
+    _exit(saved_errno == ENOENT || saved_errno == ENOTDIR ? 127 : 126);
 }
 
 static int execute_builtin_in_parent(const Command *command,
@@ -434,6 +435,7 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
         if (WIFSTOPPED(status)) {
             // Ctrl+Z 会发给整个前台进程组。记录剩余 PID 后交给 jobs 管理。
             stopped = 1;
+            result = 128 + WSTOPSIG(status);
             break;
         }
 

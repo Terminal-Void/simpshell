@@ -17,4 +17,8 @@ int is_shell_exit_requested(void);
 int get_shell_exit_status(void);
 void clear_shell_exit_request(void);
 
+// 最近一条命令的退出状态，供 $? 参数展开和 shell 默认退出码使用。
+void set_shell_last_status(int status);
+int get_shell_last_status(void);
+
 #endif //SIMPSHELL_SHELL_H

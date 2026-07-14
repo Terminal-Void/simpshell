@@ -73,7 +73,7 @@ int main(const int argc, const char *argv[]) {
                 printf("\n");
             }
 
-            request_shell_exit(input_failed ? 1 : 0);
+            request_shell_exit(input_failed ? 1 : get_shell_last_status());
             const int allow_warning = is_shell_interactive() && !input_failed;
             if (!finish_shell_exit(&exit_warning_shown, allow_warning)) {
                 // stdio 会记住 EOF；清除后第二次 Ctrl+D 才算新的退出请求。
@@ -98,18 +98,26 @@ int main(const int argc, const char *argv[]) {
 
         DynamicTokenList *cmd_tokens = tokenize(input);
         if (cmd_tokens == NULL) {
+            set_shell_last_status(2);
             exit_warning_shown = 0;
+            continue;
+        }
+
+        if (cmd_tokens->cursor == 0) {
+            free_DynamicTokenList(cmd_tokens);
             continue;
         }
 
         Pipeline *pipeline = create_pipeline_from_tokens(cmd_tokens);
         if (pipeline == NULL) {
             free_DynamicTokenList(cmd_tokens);
+            set_shell_last_status(2);
             exit_warning_shown = 0;
             continue;
         }
 
-        execute_pipeline(pipeline, input);
+        const int command_status = execute_pipeline(pipeline, input);
+        set_shell_last_status(command_status);
 
         // Pipeline 已复制 argv/重定向字符串，与 TokenList 各自拥有内存，
         // 所以执行结束后可以分别释放，不会产生悬空指针或 double free。
