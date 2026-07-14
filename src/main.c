@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <limits.h>
 
+#include "aliases.h"
+#include "history.h"
 #include "jobs.h"
 #include "shell.h"
 #include "parser.h"
@@ -91,6 +93,9 @@ int main(const int argc, const char *argv[]) {
             continue;
         }
 
+        // history 保存用户原始输入，而不是 alias 展开后的内部命令。
+        add_history_entry(input);
+
         DynamicTokenList *cmd_tokens = tokenize(input);
         if (cmd_tokens == NULL) {
             exit_warning_shown = 0;
@@ -125,6 +130,8 @@ int main(const int argc, const char *argv[]) {
     }
 
     free(input);
+    free_aliases();
+    free_history();
     printf("Bye!\n");
     return exit_status;
 }

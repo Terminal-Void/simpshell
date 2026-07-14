@@ -279,10 +279,10 @@ int execute_pipeline(const Pipeline *pipeline, const char *raw_command) {
     const BuiltinFunc first_builtin = get_builtin_func(
             first_command->argv[0], &first_builtin_type);
 
-    // 没有管道且不在后台时，builtin 必须在 shell 进程中执行，
-    // 否则 cd/exit 等命令无法改变 shell 自身状态。
+    // 只有会修改 shell 状态的 builtin 才在 parent 中执行；echo/sleep 等
+    // 普通 builtin 走 child 路径，才能正确参与管道、后台任务和终端信号。
     if (command_count == 1 && !pipeline->is_background &&
-        first_builtin != NULL) {
+        first_builtin != NULL && first_builtin_type == BUILTIN_PARENT) {
         return execute_builtin_in_parent(first_command, first_builtin);
     }
 

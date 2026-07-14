@@ -9,6 +9,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(simpshell
         src/main.c
         src/shell.c
+        src/aliases.c
+        src/history.c
         src/parser.c
         src/builtins.c
         src/executor.c

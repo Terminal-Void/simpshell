@@ -3,7 +3,9 @@
 //
 
 #include "builtins.h"
+#include "aliases.h"
 #include "executor.h"
+#include "history.h"
 #include "jobs.h"
 #include "parser.h"
 #include "utils.h"
@@ -20,6 +22,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 
@@ -39,8 +42,14 @@ static int builtin_exit(char **argv);
 static int builtin_pwd(char **argv);
 static int builtin_clear(char **argv);
 static int builtin_export(char **argv);
+static int builtin_unset(char **argv);
 static int builtin_exec(char **argv);
 static int builtin_source(char **argv);
+static int builtin_echo(char **argv);
+static int builtin_alias(char **argv);
+static int builtin_unalias(char **argv);
+static int builtin_history(char **argv);
+static int builtin_sleep(char **argv);
 
 //Special Built-ins
 
@@ -70,14 +79,20 @@ BuiltinCommand builtins[] = {
     {"pwd", builtin_pwd,BUILTIN_REGULAR},
     {"clear", builtin_clear, BUILTIN_REGULAR},
     {"export", builtin_export, BUILTIN_PARENT},
+    {"unset", builtin_unset, BUILTIN_PARENT},
     {"exec", builtin_exec, BUILTIN_PARENT},
     {"source", builtin_source, BUILTIN_PARENT},
+    {"echo", builtin_echo, BUILTIN_REGULAR},
+    {"alias", builtin_alias, BUILTIN_PARENT},
+    {"unalias", builtin_unalias, BUILTIN_PARENT},
+    {"history", builtin_history, BUILTIN_REGULAR},
+    {"sleep", builtin_sleep, BUILTIN_REGULAR},
     {"ls", builtin_ls, BUILTIN_REGULAR},
     {"mkdir", builtin_mkdir, BUILTIN_REGULAR},
     {"rmdir", builtin_rmdir, BUILTIN_REGULAR},
     {"touch", builtin_touch, BUILTIN_REGULAR},
     {"rm", builtin_rm, BUILTIN_REGULAR},
-    {"jobs", builtin_jobs, BUILTIN_REGULAR},
+    {"jobs", builtin_jobs, BUILTIN_PARENT},
     {"bg", builtin_bg,BUILTIN_PARENT},
     {"fg", builtin_fg,BUILTIN_PARENT},
     {"wait", builtin_wait,BUILTIN_PARENT},
@@ -97,39 +112,88 @@ BuiltinFunc get_builtin_func(const char *cmd,BuiltinType *type) {
 }
 
 int builtin_cd(char **argv) {
+    if (argv[1] != NULL && argv[2] != NULL) {
+        fprintf(stderr, "cd: too many arguments\n");
+        return 1;
+    }
 
-    if (argv[1]==NULL) {
-        const char *home  = getenv("HOME");
-        if (home == NULL) {
-            fprintf(stderr,"cd: HOME environment variable not set\n");
+    char old_cwd[PATH_MAX];
+    if (getcwd(old_cwd, sizeof(old_cwd)) == NULL) {
+        perror("cd: getcwd");
+        return 1;
+    }
+
+    const char *target = argv[1];
+    int print_directory = 0;
+
+    if (target == NULL || strcmp(target, "~") == 0) {
+        target = getenv("HOME");
+        if (target == NULL || target[0] == '\0') {
+            fprintf(stderr, "cd: HOME environment variable not set\n");
             return 1;
         }
-        else {
-            if (chdir(home) != 0) {
-                perror("cd");
-                return 1;
-            }
+    } else if (strcmp(target, "-") == 0) {
+        target = getenv("OLDPWD");
+        if (target == NULL || target[0] == '\0') {
+            fprintf(stderr, "cd: OLDPWD environment variable not set\n");
+            return 1;
         }
+        print_directory = 1;
     }
-    else {
-        if (chdir(argv[1]) != 0) {
-            perror("cd");
-            return 1; // 失败返回 1
-        }
+
+    if (chdir(target) < 0) {
+        perror("cd");
+        return 1;
     }
-    return 0;
+
+    char new_cwd[PATH_MAX];
+    if (getcwd(new_cwd, sizeof(new_cwd)) == NULL) {
+        perror("cd: getcwd");
+        return 1;
+    }
+
+    int result = 0;
+    if (setenv("OLDPWD", old_cwd, 1) < 0) {
+        perror("cd: setenv OLDPWD");
+        result = 1;
+    }
+    if (setenv("PWD", new_cwd, 1) < 0) {
+        perror("cd: setenv PWD");
+        result = 1;
+    }
+    if (print_directory) {
+        printf("%s\n", new_cwd);
+    }
+    return result;
 }
 
 int builtin_exit(char **argv) {
-    (void)argv;
+    if (argv[1] != NULL && argv[2] != NULL) {
+        fprintf(stderr, "exit: too many arguments\n");
+        return 1;
+    }
+
+    long status = 0;
+    if (argv[1] != NULL) {
+        char *endptr;
+        errno = 0;
+        status = strtol(argv[1], &endptr, 10);
+        if (errno == ERANGE || endptr == argv[1] || *endptr != '\0' ||
+            status < 0 || status > 255) {
+            fprintf(stderr, "exit: %s: numeric status must be between 0 and 255\n",
+                    argv[1]);
+            return 2;
+        }
+    }
+
     // 不能在这里直接 exit()，否则 main() 无法释放 Pipeline、Token 和输入缓冲。
-    request_shell_exit(0);
-    return 0;
+    request_shell_exit((int)status);
+    return (int)status;
 }
 
 int builtin_pwd(char **argv) {
     (void)argv;
-    char cwd[1024];
+    char cwd[PATH_MAX];
     // getcwd 会把当前绝对路径写入 cwd 数组
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
         printf("%s\n", cwd);
@@ -203,6 +267,144 @@ static int builtin_export(char **argv) {
     }
 
     return result;
+}
+
+static int builtin_unset(char **argv) {
+    if (argv[1] == NULL) {
+        fprintf(stderr, "unset: expected at least one variable name\n");
+        return 1;
+    }
+
+    int result = 0;
+    for (size_t i = 1; argv[i] != NULL; i++) {
+        const size_t length = strlen(argv[i]);
+        if (!is_valid_identifier(argv[i], length)) {
+            fprintf(stderr, "unset: %s: not a valid identifier\n", argv[i]);
+            result = 1;
+            continue;
+        }
+        if (unsetenv(argv[i]) < 0) {
+            perror("unset");
+            result = 1;
+        }
+    }
+    return result;
+}
+
+static int builtin_echo(char **argv) {
+    size_t start = 1;
+    int print_newline = 1;
+
+    if (argv[1] != NULL && strcmp(argv[1], "-n") == 0) {
+        print_newline = 0;
+        start = 2;
+    }
+
+    for (size_t i = start; argv[i] != NULL; i++) {
+        if (i > start) {
+            putchar(' ');
+        }
+        fputs(argv[i], stdout);
+    }
+    if (print_newline) {
+        putchar('\n');
+    }
+    return 0;
+}
+
+static int builtin_alias(char **argv) {
+    if (argv[1] == NULL) {
+        print_aliases();
+        return 0;
+    }
+
+    int result = 0;
+    for (size_t i = 1; argv[i] != NULL; i++) {
+        const char *equals = strchr(argv[i], '=');
+        if (equals == NULL) {
+            const char *value = get_alias(argv[i]);
+            if (value == NULL) {
+                fprintf(stderr, "alias: %s: not found\n", argv[i]);
+                result = 1;
+            } else {
+                printf("alias %s='%s'\n", argv[i], value);
+            }
+            continue;
+        }
+
+        const size_t name_length = (size_t)(equals - argv[i]);
+        if (!is_valid_identifier(argv[i], name_length)) {
+            fprintf(stderr, "alias: %s: invalid alias name\n", argv[i]);
+            result = 1;
+            continue;
+        }
+        if (equals[1] == '\0') {
+            fprintf(stderr, "alias: %.*s: command cannot be empty\n",
+                    (int)name_length, argv[i]);
+            result = 1;
+            continue;
+        }
+
+        char *name = strndup(argv[i], name_length);
+        if (name == NULL) {
+            perror("strndup");
+            return 1;
+        }
+        if (set_alias(name, equals + 1) < 0) {
+            result = 1;
+        }
+        free(name);
+    }
+    return result;
+}
+
+static int builtin_unalias(char **argv) {
+    if (argv[1] == NULL) {
+        fprintf(stderr, "unalias: expected at least one alias name\n");
+        return 1;
+    }
+
+    int result = 0;
+    for (size_t i = 1; argv[i] != NULL; i++) {
+        if (remove_alias(argv[i]) < 0) {
+            fprintf(stderr, "unalias: %s: not found\n", argv[i]);
+            result = 1;
+        }
+    }
+    return result;
+}
+
+static int builtin_history(char **argv) {
+    if (argv[1] != NULL) {
+        fprintf(stderr, "history: this simplified version takes no arguments\n");
+        return 1;
+    }
+    print_history();
+    return 0;
+}
+
+static int builtin_sleep(char **argv) {
+    if (argv[1] == NULL || argv[2] != NULL) {
+        fprintf(stderr, "sleep: usage: sleep SECONDS\n");
+        return 1;
+    }
+
+    char *endptr;
+    errno = 0;
+    const long seconds = strtol(argv[1], &endptr, 10);
+    if (errno == ERANGE || endptr == argv[1] || *endptr != '\0' || seconds < 0) {
+        fprintf(stderr, "sleep: %s: expected a non-negative integer\n", argv[1]);
+        return 1;
+    }
+
+    struct timespec remaining = {.tv_sec = seconds, .tv_nsec = 0};
+    while (nanosleep(&remaining, &remaining) < 0) {
+        if (errno != EINTR) {
+            perror("sleep: nanosleep");
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int builtin_exec(char **argv) {
