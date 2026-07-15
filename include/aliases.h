@@ -7,7 +7,7 @@ typedef struct AliasEntry AliasEntry;
 const char *get_alias(const char *name);
 int set_alias(const char *name, const char *value);
 int remove_alias(const char *name);
-void print_aliases(void);
+int print_aliases(void);
 void free_aliases(void);
 
 // Lexer 开始读取 alias 文本时设置递归保护，输入层弹出时再清除。

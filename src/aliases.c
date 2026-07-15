@@ -133,13 +133,56 @@ int remove_alias(const char *name) {
     return -1;
 }
 
-void print_aliases(void) {
+static size_t count_aliases(void) {
+    size_t count = 0;
+
     for (size_t bucket = 0; bucket < ALIAS_BUCKET_COUNT; bucket++) {
         for (const AliasEntry *entry = alias_table[bucket];
              entry != NULL; entry = entry->next) {
-            printf("alias %s='%s'\n", entry->name, entry->value);
+            count++;
         }
     }
+
+    return count;
+}
+
+static int compare_alias_names(const void *left, const void *right) {
+    const AliasEntry *const *left_entry = left;
+    const AliasEntry *const *right_entry = right;
+    return strcmp((*left_entry)->name, (*right_entry)->name);
+}
+
+int print_aliases(void) {
+    const size_t count = count_aliases();
+    if (count == 0) {
+        return 0;
+    }
+
+    /*
+     * 哈希表继续负责快速查找；这里只建立一个借用节点的临时快照，
+     * 按名称排序后输出，因此不会改变桶内链表或 AliasEntry 的所有权。
+     */
+    const AliasEntry **entries = malloc(count * sizeof(*entries));
+    if (entries == NULL) {
+        perror("malloc");
+        return 1;
+    }
+
+    size_t index = 0;
+    for (size_t bucket = 0; bucket < ALIAS_BUCKET_COUNT; bucket++) {
+        for (const AliasEntry *entry = alias_table[bucket];
+             entry != NULL; entry = entry->next) {
+            entries[index++] = entry;
+        }
+    }
+
+    qsort(entries, count, sizeof(*entries), compare_alias_names);
+    for (size_t i = 0; i < count; i++) {
+        printf("alias %s='%s'\n", entries[i]->name, entries[i]->value);
+    }
+
+    free(entries);
+    return 0;
 }
 
 void free_aliases(void) {

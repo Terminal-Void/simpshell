@@ -316,8 +316,7 @@ static int builtin_echo(char **argv) {
 
 static int builtin_alias(char **argv) {
     if (argv[1] == NULL) {
-        print_aliases();
-        return 0;
+        return print_aliases();
     }
 
     int result = 0;
